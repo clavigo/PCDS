@@ -3,78 +3,78 @@ import numpy as np
 
 class ObjectTracker(object):
     def __init__(self, scaling_factor=1.5):
-        # ... [Previous initialization code remains unchanged]
         self.cap = cv2.VideoCapture(0)
         _, self.frame = self.cap.read()
         self.scaling_factor = scaling_factor
-        # Initialize variables for the second ROI and tracking state
-        self.selection2 = None
-        self.drag_start2 = None
-        self.tracking_state2 = 0
+        self.frame = cv2.resize(self.frame, None,
+                                fx=self.scaling_factor, fy=self.scaling_factor,
+                                interpolation=cv2.INTER_AREA)
 
-    # Define a method to track the mouse events
+        cv2.namedWindow('Object Tracker')
+        cv2.setMouseCallback('Object Tracker', self.mouse_event)
+
+        self.selections = []
+        self.drag_start = None
+
     def mouse_event(self, event, x, y, flags, param):
         x, y = np.int16([x, y])
 
-        # First ROI (same as before)
-        # ... [Previous mouse event handling code remains unchanged]
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.drag_start = (x, y)
 
-        # Handle the right mouse button for the second ROI
-        if event == cv2.EVENT_RBUTTONDOWN:
-            self.drag_start2 = (x, y)
-            self.tracking_state2 = 0
+        if self.drag_start:
+            if event == cv2.EVENT_MOUSEMOVE:
+                x1, y1 = x, y
 
-        if self.drag_start2:
-            if flags & cv2.EVENT_FLAG_RBUTTON:
-                h, w = self.frame.shape[:2]
-                xi, yi = self.drag_start2
-                x0, y0 = np.maximum(0, np.minimum([xi, yi], [x, y]))
-                x1, y1 = np.minimum([w, h], np.maximum([xi, yi], [x, y]))
-                self.selection2 = None
-                if x1-x0 > 0 and y1-y0 > 0:
-                    self.selection2 = (x0, y0, x1, y1)
-            else:
-                self.drag_start2 = None
-                if self.selection2 is not None:
-                    self.tracking_state2 = 1
+                frame_copy = self.frame.copy()
+                cv2.rectangle(frame_copy, self.drag_start, (x1, y1), (0, 255, 0), 2)
+                cv2.imshow('Object Tracker', frame_copy)
 
-    # Method to start tracking the object
+            elif event == cv2.EVENT_LBUTTONUP:
+                x0, y0 = np.minimum(self.drag_start, (x, y))
+                x1, y1 = np.maximum(self.drag_start, (x, y))
+
+                if x1 - x0 > 0 and y1 - y0 > 0:
+                    self.selections.append((x0, y0, x1, y1))
+
+                self.drag_start = None
+
     def start_tracking(self):
         while True:
             _, self.frame = self.cap.read()
-            self.frame = cv2.resize(self.frame, None, 
-                    fx=self.scaling_factor, fy=self.scaling_factor, 
-                    interpolation=cv2.INTER_AREA)
+
+            self.frame = cv2.resize(self.frame, None,
+                                    fx=self.scaling_factor, fy=self.scaling_factor,
+                                    interpolation=cv2.INTER_AREA)
 
             vis = self.frame.copy()
+
             hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
-            mask = cv2.inRange(hsv, np.array((0., 60., 32.)), np.array((180., 255., 255.)))
 
-            # Handle the first ROI (same as before)
-            # ... [Your existing code for the first ROI]
+            mask = cv2.inRange(hsv, np.array((0., 60., 32.)),
+                               np.array((180., 255., 255.)))
 
-            # Handle the second ROI
-            if self.selection2:
-                x0, y0, x1, y1 = self.selection2
-                self.track_window2 = (x0, y0, x1-x0, y1-y0)
-                hsv_roi2 = hsv[y0:y1, x0:x1]
-                mask_roi2 = mask[y0:y1, x0:x1]
-                hist2 = cv2.calcHist([hsv_roi2], [0], mask_roi2, [16], [0, 180])
-                cv2.normalize(hist2, hist2, 0, 255, cv2.NORM_MINMAX)
-                self.hist2 = hist2.reshape(-1)
-                vis_roi2 = vis[y0:y1, x0:x1]
-                cv2.bitwise_not(vis_roi2, vis_roi2)
-                vis[mask == 0] = 0
+            for selection in self.selections:
+                x0, y0, x1, y1 = selection
+                track_window = (x0, y0, x1 - x0, y1 - y0)
 
-            if self.tracking_state2 == 1:
-                self.selection2 = None
-                hsv_backproj2 = cv2.calcBackProject([hsv], [0], self.hist2, [0, 180], 1)
-                hsv_backproj2 &= mask
+                hsv_roi = hsv[y0:y1, x0:x1]
+                mask_roi = mask[y0:y1, x0:x1]
+                hist = cv2.calcHist([hsv_roi], [0], mask_roi, [16], [0, 180])
+
+                cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
+                hist = hist.reshape(-1)
+
+                hsv_backproj = cv2.calcBackProject([hsv], [0], hist, [0, 180], 1)
+                hsv_backproj &= mask
+
                 term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
-                track_box2, self.track_window2 = cv2.CamShift(hsv_backproj2, self.track_window2, term_crit)
-                cv2.ellipse(vis, track_box2, (0, 0, 255), 2)  # Using blue color for the second object
+                track_box, track_window = cv2.CamShift(hsv_backproj, track_window, term_crit)
+
+                cv2.ellipse(vis, track_box, (0, 255, 0), 2)
 
             cv2.imshow('Object Tracker', vis)
+
             c = cv2.waitKey(5)
             if c == 27:
                 break
